@@ -9,14 +9,15 @@ import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Seconds, Span}
 import org.scalatest.wordspec.AnyWordSpec
+import org.apache.pekko.actor.typed.ActorSystem
 
 import scala.concurrent.duration.*
 
 class MinioStorageServiceSpec extends AnyWordSpec with Matchers with ScalaFutures with BeforeAndAfterAll:
 
-  val testKit: ActorTestKit                                              = ActorTestKit()
-  implicit val system: org.apache.pekko.actor.typed.ActorSystem[Nothing] = testKit.system
-  implicit val patience: PatienceConfig                                  = PatienceConfig(timeout = Span(10, Seconds))
+  val testKit: ActorTestKit          = ActorTestKit()
+  given system: ActorSystem[Nothing] = testKit.system
+  given patience: PatienceConfig     = PatienceConfig(timeout = Span(10, Seconds))
 
   val config = ConfigFactory
     .parseString("""
@@ -32,7 +33,7 @@ class MinioStorageServiceSpec extends AnyWordSpec with Matchers with ScalaFuture
   """)
     .withFallback(ConfigFactory.load())
 
-  val storageService: MinioStorageService = new MinioStorageService("us-east-1", config)(system)
+  val storageService: MinioStorageService = new MinioStorageService("us-east-1", config)(using system)
 
   override def afterAll(): Unit =
     storageService.shutdown()

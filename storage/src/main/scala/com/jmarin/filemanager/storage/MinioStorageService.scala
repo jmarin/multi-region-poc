@@ -38,12 +38,12 @@ import scala.util.{Failure, Success, Try}
 class MinioStorageService(
     regionId: String,
     config: Config
-)(implicit system: ActorSystem[?])
+)(using system: ActorSystem[?])
     extends StorageService:
 
-  private val logger                              = LoggerFactory.getLogger(getClass)
-  private implicit val ec: ExecutionContext       = system.executionContext
-  private implicit val materializer: Materializer = Materializer(system)
+  private val logger                       = LoggerFactory.getLogger(getClass)
+  private given ec: ExecutionContext       = system.executionContext
+  private given materializer: Materializer = Materializer(system)
 
   // Read configuration
   private val s3Config   = config.getConfig(s"s3.$regionId")
@@ -262,5 +262,5 @@ class MinioStorageService(
 object MinioStorageService:
   /** Factory method to create a MinioStorageService.
     */
-  def apply(regionId: String, config: Config)(implicit system: ActorSystem[?]): MinioStorageService =
+  def apply(regionId: String, config: Config)(using system: ActorSystem[?]): MinioStorageService =
     new MinioStorageService(regionId, config)
