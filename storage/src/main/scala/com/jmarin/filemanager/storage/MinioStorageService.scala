@@ -53,6 +53,11 @@ class MinioStorageService(
   private val secretKey  = s3Config.getString("secret-key")
   private val region     = s3Config.getString("region")
 
+  // Multipart upload configuration
+  private val multipartThreshold = 8 * 1024 * 1024 // 8 MB threshold for multipart upload
+  private val chunkSize          = 5 * 1024 * 1024 // 5 MB minimum chunk size for S3
+  private val parallelUploads    = 4               // Number of parallel uploads
+
   logger.info(s"Initializing MinIO storage service for region $regionId with endpoint $endpoint and bucket $bucketName")
 
   // Create S3 async client
@@ -80,9 +85,10 @@ class MinioStorageService(
     )
     .build()
 
-  /** Upload a file to MinIO.
+  /** Upload a file to MinIO using multipart upload with parallel chunk uploads.
     *
-    * The file is stored with a key format: {fileId}/{fileName} This allows for easy organization and retrieval.
+    * The file is stored with a key format: {fileId}/{fileName}. For large files, this uses AWS S3 multipart upload with
+    * parallel chunk uploads for better performance. Small files (< 8MB) use simple upload.
     */
   override def uploadFile(
       fileId: String,
@@ -95,7 +101,22 @@ class MinioStorageService(
 
     logger.info(s"Uploading file to MinIO: bucket=$bucketName, key=$s3Key, size=$contentLength bytes")
 
-    // Materialize the source to a byte array
+    if contentLength < multipartThreshold then
+      // Use simple upload for small files
+      uploadSmall(s3Key, content, contentLength, contentType)
+    else
+      // Use multipart upload for large files
+      uploadMultipart(s3Key, content, contentLength, contentType)
+
+  /** Simple upload for small files (< 8MB). */
+  private def uploadSmall(
+      s3Key: String,
+      content: Source[ByteString, Any],
+      contentLength: Long,
+      contentType: String
+  ): Future[String] =
+    logger.debug(s"Using simple upload for small file: key=$s3Key")
+
     content
       .runWith(Sink.fold(ByteString.empty)(_ ++ _))
       .flatMap: data =>
@@ -113,12 +134,143 @@ class MinioStorageService(
           .putObject(putRequest, requestBody)
           .asScala
           .map: response =>
-            logger.info(s"Successfully uploaded file to MinIO: key=$s3Key, etag=${response.eTag()}")
+            logger.info(s"Successfully uploaded small file to MinIO: key=$s3Key, etag=${response.eTag()}")
             s3Key
           .recover:
             case ex: Exception =>
-              logger.error(s"Failed to upload file to MinIO: key=$s3Key", ex)
+              logger.error(s"Failed to upload small file to MinIO: key=$s3Key", ex)
               throw new RuntimeException(s"Failed to upload file to MinIO: ${ex.getMessage}", ex)
+
+  /** Multipart upload with parallel chunk uploads for large files. */
+  private def uploadMultipart(
+      s3Key: String,
+      content: Source[ByteString, Any],
+      contentLength: Long,
+      contentType: String
+  ): Future[String] =
+    logger.debug(s"Using multipart upload for large file: key=$s3Key")
+
+    // Step 1: Initiate multipart upload
+    val initiateRequest = CreateMultipartUploadRequest
+      .builder()
+      .bucket(bucketName)
+      .key(s3Key)
+      .contentType(contentType)
+      .build()
+
+    s3Client
+      .createMultipartUpload(initiateRequest)
+      .asScala
+      .flatMap: initResponse =>
+        val uploadId = initResponse.uploadId()
+        logger.info(s"Initiated multipart upload: key=$s3Key, uploadId=$uploadId")
+
+        // Step 2: Split content into chunks and upload in parallel
+        content
+          .grouped(chunkSize)
+          .map(_.fold(ByteString.empty)(_ ++ _))
+          .zipWithIndex
+          .mapAsync(parallelUploads): (chunk, index) =>
+            val partNumber = (index + 1).toInt
+            uploadPart(s3Key, uploadId, partNumber, chunk)
+          .runWith(Sink.seq)
+          .flatMap: parts =>
+            // Step 3: Complete multipart upload
+            completeMultipartUpload(s3Key, uploadId, parts.toList)
+          .recoverWith:
+            case ex: Exception =>
+              logger.error(s"Multipart upload failed: key=$s3Key, uploadId=$uploadId", ex)
+              // Abort the multipart upload on failure
+              abortMultipartUpload(s3Key, uploadId).flatMap: _ =>
+                Future.failed(new RuntimeException(s"Failed to upload file to MinIO: ${ex.getMessage}", ex))
+
+  /** Upload a single part of a multipart upload. */
+  private def uploadPart(
+      s3Key: String,
+      uploadId: String,
+      partNumber: Int,
+      data: ByteString
+  ): Future[CompletedPart] =
+    logger.debug(s"Uploading part $partNumber: key=$s3Key, uploadId=$uploadId, size=${data.size} bytes")
+
+    val uploadPartRequest = UploadPartRequest
+      .builder()
+      .bucket(bucketName)
+      .key(s3Key)
+      .uploadId(uploadId)
+      .partNumber(partNumber)
+      .contentLength(data.size.toLong)
+      .build()
+
+    val requestBody = AsyncRequestBody.fromBytes(data.toArray)
+
+    s3Client
+      .uploadPart(uploadPartRequest, requestBody)
+      .asScala
+      .map: response =>
+        logger.debug(s"Successfully uploaded part $partNumber: key=$s3Key, etag=${response.eTag()}")
+        CompletedPart
+          .builder()
+          .partNumber(partNumber)
+          .eTag(response.eTag())
+          .build()
+      .recover:
+        case ex: Exception =>
+          logger.error(s"Failed to upload part $partNumber: key=$s3Key, uploadId=$uploadId", ex)
+          throw ex
+
+  /** Complete a multipart upload. */
+  private def completeMultipartUpload(
+      s3Key: String,
+      uploadId: String,
+      parts: List[CompletedPart]
+  ): Future[String] =
+    logger.info(s"Completing multipart upload: key=$s3Key, uploadId=$uploadId, parts=${parts.size}")
+
+    val completedMultipartUpload = CompletedMultipartUpload
+      .builder()
+      .parts(parts.asJava)
+      .build()
+
+    val completeRequest = CompleteMultipartUploadRequest
+      .builder()
+      .bucket(bucketName)
+      .key(s3Key)
+      .uploadId(uploadId)
+      .multipartUpload(completedMultipartUpload)
+      .build()
+
+    s3Client
+      .completeMultipartUpload(completeRequest)
+      .asScala
+      .map: response =>
+        logger.info(s"Successfully completed multipart upload: key=$s3Key, etag=${response.eTag()}")
+        s3Key
+      .recover:
+        case ex: Exception =>
+          logger.error(s"Failed to complete multipart upload: key=$s3Key, uploadId=$uploadId", ex)
+          throw ex
+
+  /** Abort a multipart upload. */
+  private def abortMultipartUpload(s3Key: String, uploadId: String): Future[Unit] =
+    logger.warn(s"Aborting multipart upload: key=$s3Key, uploadId=$uploadId")
+
+    val abortRequest = AbortMultipartUploadRequest
+      .builder()
+      .bucket(bucketName)
+      .key(s3Key)
+      .uploadId(uploadId)
+      .build()
+
+    s3Client
+      .abortMultipartUpload(abortRequest)
+      .asScala
+      .map: _ =>
+        logger.info(s"Successfully aborted multipart upload: key=$s3Key, uploadId=$uploadId")
+      .recover:
+        case ex: Exception =>
+          logger.error(s"Failed to abort multipart upload: key=$s3Key, uploadId=$uploadId", ex)
+    // Don't propagate the error, as the main upload already failed
 
   /** Download a file from MinIO.
     *

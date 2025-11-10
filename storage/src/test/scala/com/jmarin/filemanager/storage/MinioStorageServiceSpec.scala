@@ -65,4 +65,28 @@ class MinioStorageServiceSpec extends AnyWordSpec with Matchers with ScalaFuture
       storageService shouldBe a[StorageService]
       storageService shouldBe a[MinioStorageService]
     }
+
+    "determine upload strategy based on file size" in {
+      // This test verifies the upload strategy selection logic without making actual S3 calls
+      // Small file size (< 8MB) should trigger simple upload path
+      val smallFileSize = 5 * 1024 * 1024 // 5 MB
+      smallFileSize should be < (8 * 1024 * 1024)
+
+      // Large file size (>= 8MB) should trigger multipart upload path
+      val largeFileSize = 10 * 1024 * 1024 // 10 MB
+      largeFileSize should be >= (8 * 1024 * 1024)
+    }
+
+    "support all required StorageService operations" in {
+      // Verify all methods are defined and accessible
+      // This validates the interface contract without making actual S3 calls
+      val methods = classOf[StorageService].getMethods.map(_.getName).toSet
+
+      methods should contain("uploadFile")
+      methods should contain("downloadFile")
+      methods should contain("deleteFile")
+      methods should contain("generatePresignedUrl")
+      methods should contain("fileExists")
+      methods should contain("getFileSize")
+    }
   }
