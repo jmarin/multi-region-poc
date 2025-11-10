@@ -6,14 +6,14 @@ ThisBuild / scalaVersion := "3.3.5"
 ThisBuild / organization := "com.jmarin"
 
 // Dependency versions
-val PekkoVersion     = "1.1.2"
+val PekkoVersion     = "1.1.3"
 val PekkoHttpVersion = "1.1.0"
 val PekkoGrpcVersion = "1.1.0"
 val PekkoJdbcVersion = "1.1.1"
 val AwsSdkVersion    = "2.29.16"
 val PostgresVersion  = "42.7.4"
 val FlywayVersion    = "10.21.0"
-val JacksonVersion   = "2.18.2"
+val JacksonVersion   = "2.17.2"
 val ScalaTestVersion = "3.2.19"
 val LogbackVersion   = "1.5.12"
 
@@ -97,12 +97,14 @@ lazy val protocol = (project in file("protocol"))
 
 // gRPC service module
 lazy val grpc = (project in file("grpc"))
-  .dependsOn(core, persistence, protocol, storage)
+  .enablePlugins(PekkoGrpcPlugin)
+  .dependsOn(core, persistence, storage)
   .settings(commonSettings)
   .settings(
-    name := "filemanager-grpc",
+    name := "grpc",
     libraryDependencies ++= commonDependencies ++ Seq(
       "org.apache.pekko" %% "pekko-grpc-runtime"           % PekkoGrpcVersion,
+      "org.apache.pekko" %% "pekko-http"                   % PekkoHttpVersion,
       "org.apache.pekko" %% "pekko-cluster-typed"          % PekkoVersion,
       "org.apache.pekko" %% "pekko-cluster-sharding-typed" % PekkoVersion,
       "org.apache.pekko" %% "pekko-discovery"              % PekkoVersion

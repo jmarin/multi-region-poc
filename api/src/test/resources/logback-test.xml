@@ -7,11 +7,8 @@
 
   <logger name="org.apache.pekko" level="OFF"/>
   <logger name="com.jmarin" level="OFF"/>
-  <logger name="software.amazon.awssdk" level="OFF"/>
-  <logger name="io.netty" level="OFF"/>
 
   <root level="OFF">
     <appender-ref ref="STDOUT" />
   </root>
-  
 </configuration>

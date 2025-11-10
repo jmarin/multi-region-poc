@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package com.jmarin.filemanager.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.jmarin.filemanager.grpc";
+option java_outer_classname = "FileManagerProto";
+
+// FileManager service definition
+service FileManagerService {
+  // Register a file that has already been uploaded to storage
+  rpc RegisterFile(RegisterFileRequest) returns (RegisterFileResponse);
+  
+  // Get information about a file
+  rpc GetFileInfo(GetFileInfoRequest) returns (GetFileInfoResponse);
+  
+  // Delete a file from the system
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse);
+  
+  // List files (optionally filtered by owner)
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  
+  // Get download URL for a file
+  rpc DownloadFile(DownloadFileRequest) returns (DownloadFileResponse);
+}
+
+// Response status codes
+enum ResponseStatus {
+  SUCCESS = 0;
+  REGION_RESTRICTION_VIOLATED = 1;
+  INVALID_REQUEST = 2;
+  INTERNAL_ERROR = 3;
+  NOT_FOUND = 4;
+  DOWNLOAD_NOT_AUTHORIZED = 5;
+}
+
+// Request to register a file that has already been uploaded to storage
+message RegisterFileRequest {
+  string file_id = 1;
+  string name = 2;
+  string s3_key = 3;
+  int64 size_bytes = 4;
+  string mime_type = 5;
+  string owner = 6;
+  repeated string allowed_regions = 7;  // Empty = unrestricted, otherwise specific regions
+  string region = 8;  // The datacenter receiving this upload
+}
+
+// Response from file registration
+message RegisterFileResponse {
+  string file_id = 1;
+  FileMetadata metadata = 2;
+  ResponseStatus status = 3;
+  string error_message = 4;
+}
+
+// Request to get file information
+message GetFileInfoRequest {
+  string file_id = 1;
+}
+
+// Response with file information
+message GetFileInfoResponse {
+  FileMetadata metadata = 1;
+  bool found = 2;
+}
+
+// Request to delete a file
+message DeleteFileRequest {
+  string file_id = 1;
+}
+
+// Response from file deletion
+message DeleteFileResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// Request to list files
+message ListFilesRequest {
+  string owner = 1;  // Optional filter by owner
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+// Response with list of files
+message ListFilesResponse {
+  repeated FileMetadata files = 1;
+  int32 total_count = 2;
+}
+
+// Request to download a file
+message DownloadFileRequest {
+  string file_id = 1;
+  string region = 2;  // The datacenter handling this download request
+}
+
+// Response with download information
+message DownloadFileResponse {
+  string presigned_url = 1;
+  string s3_key = 2;
+  ResponseStatus status = 3;
+  string error_message = 4;
+}
+
+// File metadata
+message FileMetadata {
+  string file_id = 1;
+  string name = 2;
+  int64 size_bytes = 3;
+  string mime_type = 4;
+  string s3_key = 5;
+  string owner = 6;
+  int64 created_at = 7;
+  int64 modified_at = 8;
+  string status = 9;
+  repeated string allowed_regions = 10;  // Empty = unrestricted
+  string uploaded_region = 11;  // The region where file was originally uploaded
+  repeated ReplicaInfo replicas = 12;  // Replica information
+}
+
+// Information about a file replica
+message ReplicaInfo {
+  string region_id = 1;
+  string s3_key = 2;
+  int64 replicated_at = 3;
+}
