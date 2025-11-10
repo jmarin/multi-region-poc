@@ -1,0 +1,140 @@
+version: "3.8"
+
+services:
+  # ============================================================
+  # US-EAST-1 Region
+  # ============================================================
+  postgres-us-east-1:
+    image: postgres:15
+    container_name: filemanager-postgres-us-east-1
+    environment:
+      POSTGRES_DB: filemanager_us_east_1
+      POSTGRES_USER: filemanager
+      POSTGRES_PASSWORD: filemanager123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-us-east-1-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U filemanager"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - filemanager-network
+
+  minio-us-east-1:
+    image: minio/minio:latest
+    container_name: filemanager-minio-us-east-1
+    command: server /data --console-address ":9090"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000" # S3 API
+      - "9100:9090" # Console UI
+    volumes:
+      - minio-us-east-1-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - filemanager-network
+
+  # ============================================================
+  # EU-WEST-1 Region
+  # ============================================================
+  postgres-eu-west-1:
+    image: postgres:15
+    container_name: filemanager-postgres-eu-west-1
+    environment:
+      POSTGRES_DB: filemanager_eu_west_1
+      POSTGRES_USER: filemanager
+      POSTGRES_PASSWORD: filemanager123
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-eu-west-1-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U filemanager"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - filemanager-network
+
+  minio-eu-west-1:
+    image: minio/minio:latest
+    container_name: filemanager-minio-eu-west-1
+    command: server /data --console-address ":9090"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9001:9000" # S3 API
+      - "9101:9090" # Console UI
+    volumes:
+      - minio-eu-west-1-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - filemanager-network
+
+  # ============================================================
+  # AP-SOUTH-1 Region
+  # ============================================================
+  postgres-ap-south-1:
+    image: postgres:15
+    container_name: filemanager-postgres-ap-south-1
+    environment:
+      POSTGRES_DB: filemanager_ap_south_1
+      POSTGRES_USER: filemanager
+      POSTGRES_PASSWORD: filemanager123
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres-ap-south-1-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U filemanager"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - filemanager-network
+
+  minio-ap-south-1:
+    image: minio/minio:latest
+    container_name: filemanager-minio-ap-south-1
+    command: server /data --console-address ":9090"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9002:9000" # S3 API
+      - "9102:9090" # Console UI
+    volumes:
+      - minio-ap-south-1-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - filemanager-network
+
+networks:
+  filemanager-network:
+    driver: bridge
+
+volumes:
+  postgres-us-east-1-data:
+  postgres-eu-west-1-data:
+  postgres-ap-south-1-data:
+  minio-us-east-1-data:
+  minio-eu-west-1-data:
+  minio-ap-south-1-data:
