@@ -12,6 +12,7 @@ val PekkoGrpcVersion = "1.1.0"
 val PekkoJdbcVersion = "1.1.1"
 val AwsSdkVersion    = "2.29.16"
 val PostgresVersion  = "42.7.4"
+val FlywayVersion    = "10.21.0"
 val JacksonVersion   = "2.18.2"
 val ScalaTestVersion = "3.2.19"
 val LogbackVersion   = "1.5.12"
@@ -73,6 +74,8 @@ lazy val persistence = (project in file("persistence"))
       "org.apache.pekko"                %% "pekko-persistence-jdbc"       % PekkoJdbcVersion,
       "com.fasterxml.jackson.dataformat" % "jackson-dataformat-cbor"      % JacksonVersion,
       "org.postgresql"                   % "postgresql"                   % PostgresVersion,
+      "org.flywaydb"                     % "flyway-core"                  % FlywayVersion,
+      "org.flywaydb"                     % "flyway-database-postgresql"   % FlywayVersion,
       "org.apache.pekko"                %% "pekko-persistence-testkit"    % PekkoVersion % Test
     )
   )
