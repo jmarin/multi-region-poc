@@ -32,7 +32,10 @@ lazy val commonSettings = Seq(
     "-Xlint:deprecation"
   ),
   Test / parallelExecution := false,
-  Test / fork              := true
+  Test / fork              := true,
+  Test / javaOptions ++= Seq(
+    "-Dio.netty.tryReflectionSetAccessible=true"
+  )
 )
 
 // Common dependencies
