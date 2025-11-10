@@ -127,6 +127,45 @@ services:
     networks:
       - filemanager-network
 
+  # ============================================================
+  # MinIO Initialization - Create buckets
+  # ============================================================
+  minio-init:
+    image: minio/mc:latest
+    container_name: filemanager-minio-init
+    depends_on:
+      minio-us-east-1:
+        condition: service_healthy
+      minio-eu-west-1:
+        condition: service_healthy
+      minio-ap-south-1:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      # Wait a bit for MinIO to be fully ready
+      sleep 5;
+
+      # Configure MinIO clients for each region
+      /usr/bin/mc alias set us-east-1 http://minio-us-east-1:9000 minioadmin minioadmin123;
+      /usr/bin/mc alias set eu-west-1 http://minio-eu-west-1:9000 minioadmin minioadmin123;
+      /usr/bin/mc alias set ap-south-1 http://minio-ap-south-1:9000 minioadmin minioadmin123;
+
+      # Create buckets if they don't exist
+      /usr/bin/mc mb us-east-1/filemanager-us-east-1 --ignore-existing;
+      /usr/bin/mc mb eu-west-1/filemanager-eu-west-1 --ignore-existing;
+      /usr/bin/mc mb ap-south-1/filemanager-ap-south-1 --ignore-existing;
+
+      # Set bucket policies for download access
+      /usr/bin/mc anonymous set download us-east-1/filemanager-us-east-1;
+      /usr/bin/mc anonymous set download eu-west-1/filemanager-eu-west-1;
+      /usr/bin/mc anonymous set download ap-south-1/filemanager-ap-south-1;
+
+      echo 'MinIO buckets created and configured successfully';
+      exit 0;
+      "
+    networks:
+      - filemanager-network
+
 networks:
   filemanager-network:
     driver: bridge

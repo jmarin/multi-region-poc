@@ -6,16 +6,22 @@ ThisBuild / scalaVersion := "3.3.5"
 ThisBuild / organization := "com.jmarin"
 
 // Dependency versions
-val PekkoVersion     = "1.1.3"
-val PekkoHttpVersion = "1.1.0"
-val PekkoGrpcVersion = "1.1.0"
-val PekkoJdbcVersion = "1.1.1"
-val AwsSdkVersion    = "2.29.16"
-val PostgresVersion  = "42.7.4"
-val FlywayVersion    = "10.21.0"
-val JacksonVersion   = "2.17.2"
-val ScalaTestVersion = "3.2.19"
-val LogbackVersion   = "1.5.12"
+val PekkoVersion          = "1.1.3"
+val PekkoHttpVersion      = "1.1.0"
+val PekkoGrpcVersion      = "1.1.0"
+val PekkoJdbcVersion      = "1.1.1"
+val AwsSdkVersion         = "2.29.16"
+val PostgresVersion       = "42.7.4"
+val FlywayVersion         = "10.21.0"
+val JacksonVersion        = "2.17.2"
+val ScalaTestVersion      = "3.2.19"
+val LogbackVersion        = "1.5.12"
+val TapirVersion          = "1.11.10"
+val Http4sVersion         = "0.23.30"
+val CatsEffectVersion     = "3.5.7"
+val CirceVersion          = "0.14.10"
+val Log4CatsVersion       = "2.7.0"
+val TestContainersVersion = "0.41.4"
 
 // Common settings for all modules
 lazy val commonSettings = Seq(
@@ -49,7 +55,7 @@ lazy val commonDependencies = Seq(
 
 // Root project
 lazy val root = (project in file("."))
-  .aggregate(core, persistence, protocol, grpc, api, storage, integration)
+  .aggregate(core, persistence, protocol, grpc, endpoints, api, storage, integration)
   .settings(
     name           := "multi-region-poc",
     publish / skip := true
@@ -111,17 +117,42 @@ lazy val grpc = (project in file("grpc"))
     )
   )
 
-// REST API module
+// Endpoints module (Tapir endpoint definitions)
+lazy val endpoints = (project in file("endpoints"))
+  .dependsOn(core)
+  .settings(commonSettings)
+  .settings(
+    name := "filemanager-endpoints",
+    libraryDependencies ++= Seq(
+      "com.softwaremill.sttp.tapir" %% "tapir-core"       % TapirVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-json-circe" % TapirVersion,
+      "io.circe"                    %% "circe-core"       % CirceVersion,
+      "io.circe"                    %% "circe-generic"    % CirceVersion,
+      "io.circe"                    %% "circe-parser"     % CirceVersion,
+      "org.scalatest"               %% "scalatest"        % ScalaTestVersion % Test
+    )
+  )
+
+// REST API module (Http4s + Cats Effect implementation)
 lazy val api = (project in file("api"))
-  .dependsOn(grpc)
+  .dependsOn(endpoints, grpc)
   .enablePlugins(JavaAppPackaging, DockerPlugin)
   .settings(commonSettings)
   .settings(
     name                 := "filemanager-api",
-    libraryDependencies ++= commonDependencies ++ Seq(
-      "org.apache.pekko" %% "pekko-http"            % PekkoHttpVersion,
-      "org.apache.pekko" %% "pekko-http-spray-json" % PekkoHttpVersion,
-      "org.apache.pekko" %% "pekko-http-testkit"    % PekkoHttpVersion % Test
+    libraryDependencies ++= Seq(
+      "org.typelevel"               %% "cats-effect"             % CatsEffectVersion,
+      "org.http4s"                  %% "http4s-ember-server"     % Http4sVersion,
+      "org.http4s"                  %% "http4s-dsl"              % Http4sVersion,
+      "org.http4s"                  %% "http4s-circe"            % Http4sVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-http4s-server"     % TapirVersion,
+      "com.softwaremill.sttp.tapir" %% "tapir-swagger-ui-bundle" % TapirVersion,
+      "org.typelevel"               %% "log4cats-slf4j"          % "2.7.0",
+      "ch.qos.logback"               % "logback-classic"         % LogbackVersion,
+      "org.apache.pekko"            %% "pekko-actor-typed"       % PekkoVersion,
+      "org.apache.pekko"            %% "pekko-stream"            % PekkoVersion,
+      "org.scalatest"               %% "scalatest"               % ScalaTestVersion % Test,
+      "org.http4s"                  %% "http4s-ember-client"     % Http4sVersion    % Test
     ),
     Compile / mainClass  := Some("com.jmarin.filemanager.api.Main"),
     Docker / packageName := "filemanager-api",
@@ -144,13 +175,19 @@ lazy val storage = (project in file("storage"))
 
 // Integration tests module
 lazy val integration = (project in file("integration"))
-  .dependsOn(api, grpc, storage)
+  .dependsOn(core, api, grpc, storage, persistence)
   .settings(commonSettings)
   .settings(
     name           := "filemanager-integration",
     publish / skip := true,
+    Test / scalacOptions += "-Wconf:cat=deprecation:s",
     libraryDependencies ++= commonDependencies ++ Seq(
-      "org.apache.pekko" %% "pekko-stream-testkit" % PekkoVersion     % Test,
-      "org.apache.pekko" %% "pekko-http-testkit"   % PekkoHttpVersion % Test
+      "org.apache.pekko" %% "pekko-stream-testkit"            % PekkoVersion          % Test,
+      "org.apache.pekko" %% "pekko-http-testkit"              % PekkoHttpVersion      % Test,
+      "com.dimafeng"     %% "testcontainers-scala-scalatest"  % TestContainersVersion % Test,
+      "com.dimafeng"     %% "testcontainers-scala-postgresql" % TestContainersVersion % Test,
+      "com.dimafeng"     %% "testcontainers-scala-minio"      % TestContainersVersion % Test,
+      "org.http4s"       %% "http4s-ember-client"             % Http4sVersion         % Test,
+      "org.typelevel"    %% "log4cats-slf4j"                  % Log4CatsVersion       % Test
     )
   )

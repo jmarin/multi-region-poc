@@ -34,9 +34,11 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
 
   // In-memory storage service for testing
   class InMemoryStorageService extends StorageService:
-    var uploadedFiles: Map[String, (String, Long)] = Map.empty
-    var deletedFiles: Set[String]                  = Set.empty
-    var presignedUrls: Map[String, URL]            = Map.empty
+    import java.util.concurrent.atomic.AtomicReference
+
+    private val uploadedFiles = new AtomicReference[Map[String, (String, Long)]](Map.empty)
+    private val deletedFiles  = new AtomicReference[Set[String]](Set.empty)
+    private val presignedUrls = new AtomicReference[Map[String, URL]](Map.empty)
 
     override def uploadFile(
         fileId: String,
@@ -46,26 +48,31 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
         contentType: String
     ): Future[String] =
       val s3Key = s"test-region/$fileId"
-      uploadedFiles = uploadedFiles + (s3Key -> (fileName, contentLength))
+      uploadedFiles.updateAndGet(_ + (s3Key -> (fileName, contentLength)))
       Future.successful(s3Key)
 
     override def downloadFile(s3Key: String): Future[Source[ByteString, Any]] =
       Future.successful(Source.single(ByteString("test content")))
 
     override def deleteFile(s3Key: String): Future[Unit] =
-      deletedFiles = deletedFiles + s3Key
+      deletedFiles.updateAndGet(_ + s3Key)
       Future.successful(())
 
     override def fileExists(s3Key: String): Future[Boolean] =
-      Future.successful(uploadedFiles.contains(s3Key))
+      Future.successful(uploadedFiles.get().contains(s3Key))
 
     override def getFileSize(s3Key: String): Future[Long] =
-      Future.successful(uploadedFiles.get(s3Key).map(_._2).getOrElse(0L))
+      Future.successful(uploadedFiles.get().get(s3Key).map(_._2).getOrElse(0L))
 
     override def generatePresignedUrl(s3Key: String, duration: FiniteDuration): Future[URL] =
       val url = URL.of(java.net.URI.create(s"https://test-bucket.s3.amazonaws.com/$s3Key?presigned=true"), null)
-      presignedUrls = presignedUrls + (s3Key -> url)
+      presignedUrls.updateAndGet(_ + (s3Key -> url))
       Future.successful(url)
+
+    // Accessor methods for tests
+    def getUploadedFiles: Map[String, (String, Long)] = uploadedFiles.get()
+    def getDeletedFiles: Set[String]                  = deletedFiles.get()
+    def getPresignedUrls: Map[String, URL]            = presignedUrls.get()
 
   "FileManagerServiceImpl" should {
 
@@ -101,7 +108,7 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
       )
       val s3Key        = uploadFuture.futureValue
       s3Key shouldBe "test-region/test-123"
-      storageService.uploadedFiles should contain key s3Key
+      storageService.getUploadedFiles should contain key s3Key
 
       // Test presigned URL generation
       val urlFuture = storageService.generatePresignedUrl(s3Key, 1.hour)
@@ -112,7 +119,7 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
       // Test delete
       val deleteFuture = storageService.deleteFile(s3Key)
       deleteFuture.futureValue
-      storageService.deletedFiles should contain(s3Key)
+      storageService.getDeletedFiles should contain(s3Key)
     }
   }
 
@@ -123,9 +130,9 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
       val s3Key1 = storage.uploadFile("file1", "test1.txt", Source.empty, 100L, "text/plain").futureValue
       val s3Key2 = storage.uploadFile("file2", "test2.txt", Source.empty, 200L, "text/plain").futureValue
 
-      storage.uploadedFiles should have size 2
-      storage.uploadedFiles(s3Key1) shouldBe ("test1.txt", 100L)
-      storage.uploadedFiles(s3Key2) shouldBe ("test2.txt", 200L)
+      storage.getUploadedFiles should have size 2
+      storage.getUploadedFiles(s3Key1) shouldBe ("test1.txt", 100L)
+      storage.getUploadedFiles(s3Key2) shouldBe ("test2.txt", 200L)
     }
 
     "track deleted files" in {
@@ -134,9 +141,9 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
       storage.deleteFile("key1").futureValue
       storage.deleteFile("key2").futureValue
 
-      storage.deletedFiles should have size 2
-      storage.deletedFiles should contain("key1")
-      storage.deletedFiles should contain("key2")
+      storage.getDeletedFiles should have size 2
+      storage.getDeletedFiles should contain("key1")
+      storage.getDeletedFiles should contain("key2")
     }
 
     "generate presigned URLs" in {
@@ -146,6 +153,6 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
 
       url.toString should include("test-key")
       url.toString should include("presigned=true")
-      storage.presignedUrls should contain key "test-key"
+      storage.getPresignedUrls should contain key "test-key"
     }
   }
