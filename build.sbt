@@ -41,7 +41,8 @@ lazy val commonSettings = Seq(
   Test / fork              := true,
   Test / javaOptions ++= Seq(
     "-Dio.netty.tryReflectionSetAccessible=true"
-  )
+  ),
+  coverageExcludedFiles := ".*pekko-grpc.*;.*Main\\.scala;.*MigrationRunner\\.scala;.*GrpcServer\\.scala"
 )
 
 // Common dependencies

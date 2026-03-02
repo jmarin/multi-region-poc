@@ -65,7 +65,7 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
       Future.successful(uploadedFiles.get().get(s3Key).map(_._2).getOrElse(0L))
 
     override def generatePresignedUrl(s3Key: String, duration: FiniteDuration): Future[URL] =
-      val url = URL.of(java.net.URI.create(s"https://test-bucket.s3.amazonaws.com/$s3Key?presigned=true"), null)
+      val url = java.net.URI.create(s"https://test-bucket.s3.amazonaws.com/$s3Key?presigned=true").toURL
       presignedUrls.updateAndGet(_ + (s3Key -> url))
       Future.successful(url)
 
@@ -121,6 +121,28 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
       deleteFuture.futureValue
       storageService.getDeletedFiles should contain(s3Key)
     }
+
+    "return empty list for listFiles with page and pageSize parameters" in {
+      val storageService = new InMemoryStorageService
+      val service        = new FileManagerServiceImpl(testKit.system, storageService, "test-region")
+
+      val request  = ListFilesRequest(owner = "owner", page = 1, pageSize = 50)
+      val response = service.listFiles(request).futureValue
+
+      response.files shouldBe empty
+      response.totalCount shouldBe 0
+    }
+
+    "return empty list for listFiles with empty owner" in {
+      val storageService = new InMemoryStorageService
+      val service        = new FileManagerServiceImpl(testKit.system, storageService, "test-region")
+
+      val request  = ListFilesRequest(owner = "")
+      val response = service.listFiles(request).futureValue
+
+      response.files shouldBe empty
+      response.totalCount shouldBe 0
+    }
   }
 
   "InMemoryStorageService" should {
@@ -154,5 +176,30 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
       url.toString should include("test-key")
       url.toString should include("presigned=true")
       storage.getPresignedUrls should contain key "test-key"
+    }
+
+    "report file exists after upload" in {
+      val storage = new InMemoryStorageService
+
+      val s3Key = storage.uploadFile("file1", "test.txt", Source.empty, 100L, "text/plain").futureValue
+
+      storage.fileExists(s3Key).futureValue shouldBe true
+      storage.fileExists("non-existent-key").futureValue shouldBe false
+    }
+
+    "return file size for uploaded files" in {
+      val storage = new InMemoryStorageService
+
+      val s3Key = storage.uploadFile("file1", "test.txt", Source.empty, 512L, "text/plain").futureValue
+
+      storage.getFileSize(s3Key).futureValue shouldBe 512L
+      storage.getFileSize("non-existent-key").futureValue shouldBe 0L
+    }
+
+    "download files returning content" in {
+      val storage = new InMemoryStorageService
+
+      val source = storage.downloadFile("any-key").futureValue
+      source should not be null
     }
   }
