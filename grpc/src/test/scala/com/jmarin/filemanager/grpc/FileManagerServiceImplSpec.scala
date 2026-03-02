@@ -43,6 +43,7 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
   private val testKit = ActorTestKit("FileManagerServiceImplSpec", config)
 
   given system: org.apache.pekko.actor.typed.ActorSystem[?] = testKit.system
+  // Longer timeout needed for cluster sharding initialization and entity resolution
   override given patienceConfig: PatienceConfig             = PatienceConfig(timeout = 10.seconds, interval = 200.millis)
 
   import scala.concurrent.ExecutionContext.Implicits.global

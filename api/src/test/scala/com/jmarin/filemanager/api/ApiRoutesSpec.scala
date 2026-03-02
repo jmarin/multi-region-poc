@@ -92,7 +92,7 @@ class ApiRoutesSpec extends AnyWordSpec with Matchers:
       response.get.status.code shouldBe 200
     }
 
-    "create routes that return 404 for unknown paths" in {
+    "not match unknown paths" in {
       val routes = ApiRoutes.routes(testConfig, stubStorage, stubGrpc)
 
       val request = org.http4s.Request[IO](
@@ -102,8 +102,8 @@ class ApiRoutesSpec extends AnyWordSpec with Matchers:
 
       val response = routes.run(request).value.unsafeRunSync()
 
-      // Either None (route not matched) or some 404 response
-      response.forall(_.status.code == 404) || response.isEmpty shouldBe true
+      // HttpRoutes returns None when no route matches
+      response shouldBe None
     }
 
     "create routes that handle file info requests" in {
