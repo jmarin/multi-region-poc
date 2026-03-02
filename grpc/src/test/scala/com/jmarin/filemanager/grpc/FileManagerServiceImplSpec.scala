@@ -1,7 +1,11 @@
 package com.jmarin.filemanager.grpc
 
+import com.jmarin.filemanager.persistence.FileManager
 import com.jmarin.filemanager.storage.StorageService
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
+import org.apache.pekko.cluster.sharding.typed.scaladsl.{ClusterSharding, Entity}
+import org.apache.pekko.cluster.typed.{Cluster, Join}
+import org.apache.pekko.persistence.typed.ReplicaId
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
 import org.scalatest.BeforeAndAfterAll
@@ -20,14 +24,40 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
     pekko.remote.artery.canonical.port = 0
     pekko.remote.artery.canonical.hostname = 127.0.0.1
     pekko.cluster.jmx.multi-mbeans-in-same-jvm = on
+    pekko.actor.allow-java-serialization = on
+    pekko.actor.warn-about-java-serializer-usage = off
+    pekko.actor.serialization-bindings {
+      "com.jmarin.filemanager.domain.CborSerializable" = jackson-cbor
+    }
+    pekko.persistence.journal.plugin = "pekko.persistence.journal.inmem"
+    pekko.persistence.snapshot-store.plugin = "pekko.persistence.snapshot-store.local"
+    pekko.persistence.snapshot-store.local.dir = "target/test-snapshots-grpc"
+    pekko.persistence.typed.replicated-event-sourcing {
+      replicas = ["test-region"]
+    }
+    jdbc-read-journal {
+      class = "org.apache.pekko.persistence.testkit.query.PersistenceTestKitReadJournalProvider"
+    }
   """)
 
   private val testKit = ActorTestKit("FileManagerServiceImplSpec", config)
 
   given system: org.apache.pekko.actor.typed.ActorSystem[?] = testKit.system
-  override given patienceConfig: PatienceConfig             = PatienceConfig(timeout = 3.seconds, interval = 100.millis)
+  override given patienceConfig: PatienceConfig             = PatienceConfig(timeout = 10.seconds, interval = 200.millis)
 
   import scala.concurrent.ExecutionContext.Implicits.global
+
+  // Initialize cluster (single node) and sharding for testing
+  private val cluster = Cluster(testKit.system)
+  cluster.manager ! Join(cluster.selfMember.address)
+
+  private val replicaId     = ReplicaId("test-region")
+  private val allReplicaIds = Set(replicaId)
+
+  // Initialize sharding for FileManager entities
+  private val sharding = ClusterSharding(testKit.system)
+  sharding.init(Entity(FileManager.TypeKey): entityContext =>
+    FileManager(entityContext.entityId, replicaId, allReplicaIds))
 
   override def afterAll(): Unit =
     testKit.shutdownTestKit()
@@ -142,6 +172,123 @@ class FileManagerServiceImplSpec extends AnyWordSpec with Matchers with BeforeAn
 
       response.files shouldBe empty
       response.totalCount shouldBe 0
+    }
+
+    "register a file and get its info via gRPC" in {
+      val storageService = new InMemoryStorageService
+      val service        = new FileManagerServiceImpl(testKit.system, storageService, "test-region")
+
+      // Register a file
+      val registerRequest = RegisterFileRequest(
+        fileId = "grpc-test-file-1",
+        name = "test-document.pdf",
+        s3Key = "test-region/grpc-test-file-1",
+        sizeBytes = 2048L,
+        mimeType = "application/pdf",
+        owner = "test-user",
+        allowedRegions = Seq.empty,
+        region = "test-region"
+      )
+
+      val registerResponse = service.registerFile(registerRequest).futureValue
+
+      registerResponse.status shouldBe ResponseStatus.SUCCESS
+      registerResponse.fileId shouldBe "grpc-test-file-1"
+      registerResponse.metadata shouldBe defined
+      registerResponse.metadata.get.fileId shouldBe "grpc-test-file-1"
+      registerResponse.metadata.get.name shouldBe "test-document.pdf"
+      registerResponse.metadata.get.sizeBytes shouldBe 2048L
+      registerResponse.metadata.get.replicas should not be empty
+
+      // Now get file info
+      val infoRequest  = GetFileInfoRequest(fileId = "grpc-test-file-1")
+      val infoResponse = service.getFileInfo(infoRequest).futureValue
+
+      infoResponse.found shouldBe true
+      infoResponse.metadata shouldBe defined
+      infoResponse.metadata.get.fileId shouldBe "grpc-test-file-1"
+    }
+
+    "return not found for non-existent file info" in {
+      val storageService = new InMemoryStorageService
+      val service        = new FileManagerServiceImpl(testKit.system, storageService, "test-region")
+
+      val request  = GetFileInfoRequest(fileId = "non-existent-file")
+      val response = service.getFileInfo(request).futureValue
+
+      response.found shouldBe false
+      response.metadata shouldBe None
+    }
+
+    "delete a registered file" in {
+      val storageService = new InMemoryStorageService
+      val service        = new FileManagerServiceImpl(testKit.system, storageService, "test-region")
+
+      // First register a file
+      val registerRequest = RegisterFileRequest(
+        fileId = "grpc-delete-test",
+        name = "to-delete.txt",
+        s3Key = "test-region/grpc-delete-test",
+        sizeBytes = 100L,
+        mimeType = "text/plain",
+        owner = "user",
+        allowedRegions = Seq.empty,
+        region = "test-region"
+      )
+      service.registerFile(registerRequest).futureValue
+
+      // Delete the file
+      val deleteRequest  = DeleteFileRequest(fileId = "grpc-delete-test")
+      val deleteResponse = service.deleteFile(deleteRequest).futureValue
+
+      deleteResponse.success shouldBe true
+    }
+
+    "return failure when deleting non-existent file" in {
+      val storageService = new InMemoryStorageService
+      val service        = new FileManagerServiceImpl(testKit.system, storageService, "test-region")
+
+      val deleteRequest  = DeleteFileRequest(fileId = "non-existent-delete")
+      val deleteResponse = service.deleteFile(deleteRequest).futureValue
+
+      deleteResponse.success shouldBe false
+      deleteResponse.errorMessage should not be empty
+    }
+
+    "download a registered file and get presigned URL" in {
+      val storageService = new InMemoryStorageService
+      val service        = new FileManagerServiceImpl(testKit.system, storageService, "test-region")
+
+      // First register a file
+      val registerRequest = RegisterFileRequest(
+        fileId = "grpc-download-test",
+        name = "download.pdf",
+        s3Key = "test-region/grpc-download-test",
+        sizeBytes = 4096L,
+        mimeType = "application/pdf",
+        owner = "user",
+        allowedRegions = Seq.empty,
+        region = "test-region"
+      )
+      service.registerFile(registerRequest).futureValue
+
+      // Download the file (get presigned URL)
+      val downloadRequest  = DownloadFileRequest(fileId = "grpc-download-test", region = "test-region")
+      val downloadResponse = service.downloadFile(downloadRequest).futureValue
+
+      downloadResponse.status shouldBe ResponseStatus.SUCCESS
+      downloadResponse.presignedUrl should not be empty
+      downloadResponse.s3Key should include("grpc-download-test")
+    }
+
+    "return not found when downloading non-existent file" in {
+      val storageService = new InMemoryStorageService
+      val service        = new FileManagerServiceImpl(testKit.system, storageService, "test-region")
+
+      val downloadRequest  = DownloadFileRequest(fileId = "non-existent-download", region = "test-region")
+      val downloadResponse = service.downloadFile(downloadRequest).futureValue
+
+      downloadResponse.status shouldBe ResponseStatus.NOT_FOUND
     }
   }
 
