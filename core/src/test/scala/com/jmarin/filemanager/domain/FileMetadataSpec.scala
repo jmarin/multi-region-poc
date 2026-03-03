@@ -64,4 +64,24 @@ class FileMetadataSpec extends AnyWordSpec with Matchers:
       updated.replicas should have size 2
       updated.replicas should contain allOf ("us-east-1", "eu-west-1")
     }
+
+    "use default empty replicas when constructed directly" in {
+      val metadata = FileMetadata(
+        fileId = "file-1",
+        fileName = "test.txt",
+        fileSize = 100L,
+        contentType = "text/plain",
+        uploadedAt = Instant.now(),
+        checksum = "abc"
+      )
+
+      metadata.replicas shouldBe Set.empty
+    }
+
+    "use default None for FileManagerState metadata" in {
+      val state = FileManagerState()
+
+      state.metadata shouldBe None
+      state.isEmpty shouldBe true
+    }
   }

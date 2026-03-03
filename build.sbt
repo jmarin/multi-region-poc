@@ -41,7 +41,9 @@ lazy val commonSettings = Seq(
   Test / fork              := true,
   Test / javaOptions ++= Seq(
     "-Dio.netty.tryReflectionSetAccessible=true"
-  )
+  ),
+  coverageExcludedFiles := ".*pekko-grpc.*",
+  coverageExcludedPackages := "<empty>;com\\.jmarin\\.filemanager\\.api\\.Main;com\\.jmarin\\.filemanager\\.persistence\\.MigrationRunner;com\\.jmarin\\.filemanager\\.grpc\\.GrpcServer;com\\.jmarin\\.filemanager\\.persistence\\.DatabaseMigration;com\\.jmarin\\.filemanager\\.storage\\.MinioStorageService"
 )
 
 // Common dependencies
