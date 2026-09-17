@@ -22,13 +22,13 @@ This project showcases an **active-active multi-region architecture** where:
 - **Persistence**: PostgreSQL with pekko-persistence-jdbc
 - **Storage**: MinIO (S3-compatible) for local development and demonstration
 - **Internal API**: gRPC (Pekko gRPC) - Event sourcing service layer
-- **Public API**: REST (Pekko HTTP) - Client-facing endpoints that call gRPC service
+- **Public API**: REST (Http4s + Tapir, Cats Effect) - Client-facing endpoints that call gRPC service
 
 **Layered Architecture:**
 ```
 External Clients
       ↓
-  REST API (Pekko HTTP) - Multipart uploads, JSON responses
+  REST API (Http4s + Tapir) - Multipart uploads, JSON responses
       ↓
   gRPC Service (Protobuf) - Event sourcing operations
       ↓
@@ -39,27 +39,22 @@ External Clients
 
 **Local Environment:**
 - 3 Pekko nodes (localhost:8081, 8082, 8083)
-- 3 PostgreSQL instances (localhost:5432-5434)
+- 3 PostgreSQL instances (localhost:5433-5435)
 - 3 MinIO instances (localhost:9000-9002)
 
 ## Domain Model
 
 The system manages file lifecycle operations:
-- Upload files with metadata (name, size, MIME type, owner)
-- **Regional Upload Restrictions**: Enforce data residency requirements per file
-- Download files via presigned URLs with region validation
-- Delete files (soft delete)
+- Upload files with metadata (name, size, MIME type, checksum)
+- Download files via presigned URLs
+- Delete files (removes current state; the delete event remains in the event log)
 - Query file metadata across datacenters
 
-### Data Residency & Regional Restrictions
+Each operation is captured as an event and replicated across all datacenters, ensuring eventual consistency.
 
-Files can have regional restrictions for compliance (GDPR, data sovereignty, etc.):
-- **Unrestricted files**: Can be uploaded to any datacenter (default behavior)
-- **Region-restricted files**: Must be uploaded to specific regions only
-- **Download validation**: Prevent downloads from unauthorized regions
-- **Descriptive errors**: Clear error messages in both gRPC and REST APIs
+### Data Residency & Regional Restrictions (not yet implemented)
 
-Each operation is captured as an event and replicated across all datacenters, ensuring eventual consistency while respecting regional boundaries.
+The gRPC/REST contracts carry an `owner` field and an `allowedRegions` field on file metadata, intended to support per-file regional upload restrictions and ownership tracking for compliance (GDPR, data sovereignty, etc.). These fields are **not currently tracked in the domain model** (`core`/`persistence`) — they are accepted on requests but always returned as empty (`allowedRegions = Seq.empty`, `owner = ""`), and no restriction is enforced on upload or download. This is planned but unimplemented.
 
 ## Project Structure
 
@@ -67,12 +62,13 @@ Each operation is captured as an event and replicated across all datacenters, en
 multi-region-poc/
 ├── core/           # Domain model, commands, events, state
 ├── persistence/    # Event sourcing, database integration, CBOR serialization
-├── grpc/           # gRPC service layer (internal API for event sourcing)
-├── api/            # REST API endpoints (public API, calls gRPC service)
+├── grpc/           # gRPC service layer (internal API for event sourcing; also holds filemanager.proto)
+├── endpoints/      # Tapir endpoint definitions shared by the REST API
+├── api/            # REST API (Http4s + Tapir), public API that calls the gRPC service
 ├── storage/        # MinIO/S3 integration
-├── protocol/       # Protobuf definitions for gRPC
+├── protocol/       # Reserved for shared protobuf definitions (currently unused/empty)
 ├── integration/    # End-to-end tests
-└── docker/         # Docker Compose for local multi-DC setup
+└── docker-compose.yml  # Docker Compose for local multi-DC setup (PostgreSQL + MinIO)
 ```
 
 ## Getting Started
@@ -111,26 +107,29 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for detailed implementation
 
 3. **Run the application (3 datacenters)**
    ```bash
-   # Terminal 1 - DC1 (US-East)
+   # Terminal 1 - DC1 (us-east-1)
    # Runs gRPC service on :9090 and REST API on :8081
-   sbt "project api" "run -Dconfig.file=dc1.conf"
+   sbt "project api" "run -Dconfig.file=api/src/main/resources/us-east-1.conf"
    
-   # Terminal 2 - DC2 (EU-West)
+   # Terminal 2 - DC2 (eu-west-1)
    # Runs gRPC service on :9091 and REST API on :8082
-   sbt "project api" "run -Dconfig.file=dc2.conf"
+   sbt "project api" "run -Dconfig.file=api/src/main/resources/eu-west-1.conf"
    
-   # Terminal 3 - DC3 (AP-South)
+   # Terminal 3 - DC3 (ap-south-1)
    # Runs gRPC service on :9092 and REST API on :8083
-   sbt "project api" "run -Dconfig.file=dc3.conf"
+   sbt "project api" "run -Dconfig.file=api/src/main/resources/ap-south-1.conf"
    ```
 
 4. **Test multi-region replication**
    ```bash
-   # Upload a file to DC1
+   # Upload a file to DC1 (substitute any local file you have on hand)
    curl -X POST http://localhost:8081/api/files \
-     -F "file=@./test-files/sample.pdf" \
+     -F "file=@./README.md" \
      -F "owner=user@example.com"
    # Response: {"fileId": "abc-123", ...}
+   # Note: "owner" is accepted by the API but not yet persisted in the domain
+   # model - it will come back empty on subsequent reads (see "Data Residency
+   # & Regional Restrictions" above).
    
    # Query from DC2 (different datacenter!)
    sleep 3
@@ -196,13 +195,15 @@ See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for detailed implementation
 ## Implementation Phases
 
 1. ✅ **Project Setup** - sbt configuration, dependencies
-2. ⏳ **Domain Model** - Event sourced FileManager entity
-3. ⏳ **PostgreSQL Integration** - Persistence layer
-4. ⏳ **S3 Storage** - File upload/download
-5. ⏳ **HTTP API** - REST endpoints
-6. ⏳ **Multi-DC Configuration** - Cluster setup
-7. ⏳ **Testing** - Unit, integration, and scenario tests
-8. ⏳ **Observability** - Metrics, logging, health checks
+2. ✅ **Domain Model** - Event sourced FileManager entity
+3. ✅ **PostgreSQL Integration** - Persistence layer
+4. ✅ **S3 Storage** - File upload/download
+5. ✅ **HTTP API** - REST endpoints
+6. ✅ **Multi-DC Configuration** - Cluster setup
+7. ✅ **Testing** - Unit, integration, and scenario tests
+8. ⏳ **Observability** - Structured logging and a basic `/health` endpoint exist; metrics/tracing are not yet implemented
+
+See `PHASE_2_COMPLETE.md` through `PHASE6_COMPLETE.md` and `NEXT_STEPS_COMPLETE.md` for the detailed history of each completed phase. Regional upload restrictions (see above) remain unimplemented despite being part of the original domain model design.
 
 ## Documentation
 
